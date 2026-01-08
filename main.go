@@ -30,7 +30,7 @@ func StartScan(addr string) {
 			fmt.Println("💰 发现一笔新的 USDT 入账！")
 			fmt.Println("--------------------------------------------------------")
 			fmt.Printf("⏰ 时间:  %s\n", rec.Time.Format("2006-01-02 15:04:05"))
-			fmt.Printf("💎 金额:  %.4f USDT\n", rec.Amount)
+			fmt.Printf("💎 金额:  %.2f USDT\n", rec.Amount)
 			fmt.Printf("👤 来自:  %s\n", rec.From)
 			fmt.Printf("📦 区块:  %d\n", rec.BlockNumber)
 			fmt.Printf("🔗 详情:  https://bscscan.com/tx/%s\n", rec.TxHash)

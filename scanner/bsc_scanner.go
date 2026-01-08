@@ -66,7 +66,7 @@ func StartScan(walletAddr string) ([]DepositRecord, error) {
 			activeRPC = rpcUrl
 			break
 		} else {
-			fmt.Printf("❌ 不可用 (%v)\n", err)
+			fmt.Println("❌ 不可用")
 			tempScanner.Close()
 		}
 	}
