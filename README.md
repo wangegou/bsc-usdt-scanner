@@ -6,7 +6,8 @@
 
 ## 核心特性
 
-- **自动切换 RPC (Auto-Switch)**: 当遇到限流、超时或无响应时，自动检测并切换到下一个可用的 RPC 节点，确保任务持续运行。
+- **多币种支持**: 目前支持扫描 **USDT** 和 **USDC** (Binance-Peg)。
+- **自动切换 RPC (Auto-Switch)**: 当遇到限流、超时、无响应或**数据修剪(Pruned)**错误时，自动切换到下一个可用节点，确保任务不中断。
 - **并发扫描 (Concurrent Scanning)**: 默认使用 5 个并发工兵 (Workers) 并行获取日志，极大提升扫描速度。
 - **零漏块保障 (Reliability)**: 采用无限重试机制，只有成功获取数据才会继续，确保**Absolutely No Data Loss**。
 - **智能排序**: 返回的结果已按时间倒序排列（最新的交易在最前面），方便查看。
@@ -34,23 +35,37 @@ func main() {
 	// 需要监控的钱包地址
 	walletAddr := "0x5bd808Ab85C124f99080da5F864EDcB39950edE5"
 
-	// 开始扫描 (默认扫描过去 30 个区块，超时时间 1 分钟)
-	// 返回是一个按照时间倒序排列的切片
-	records, err := scanner.StartScan(walletAddr)
+	// 1. 扫描 USDT
+	scanToken(walletAddr, "USDT")
+
+	// 2. 扫描 USDC
+	scanToken(walletAddr, "USDC")
+}
+
+func scanToken(addr string, symbol string) {
+	fmt.Printf("开始扫描 %s ...\n", symbol)
+	
+	// StartScan 返回按时间倒序排列的切片 (最新的在前)
+	records, err := scanner.StartScan(addr, symbol)
 	if err != nil {
-		log.Fatalf("扫描失败: %v", err)
+		log.Printf("❌ %s 扫描失败: %v", symbol, err)
+		return
 	}
 
-	fmt.Printf("扫描完成! 发现 %d 笔入账:\n", len(records))
-	
-	// 打印第一条（最新的）记录作为示例
+	fmt.Printf("✅ %s 扫描完成! 发现 %d 笔入账\n", symbol, len(records))
+
+	// 示例：仅打印最近 1 条入账记录
 	if len(records) > 0 {
 		rec := records[0]
-		fmt.Printf("最新一笔入账:\n")
-		fmt.Printf("- 时间:   %s\n", rec.Time.Format("2006-01-02 15:04:05"))
-		fmt.Printf("- 金额:   %f USDT\n", rec.Amount)
-		fmt.Printf("- 来自:   %s\n", rec.From)
-		fmt.Printf("- 哈希:   https://bscscan.com/tx/%s\n", rec.TxHash)
+		fmt.Println("\n========================================================")
+		fmt.Printf("💰 发现一笔新的 %s 入账！\n", symbol)
+		fmt.Println("--------------------------------------------------------")
+		fmt.Printf("⏰ 时间:  %s\n", rec.Time.Format("2006-01-02 15:04:05"))
+		fmt.Printf("💎 金额:  %.2f %s\n", rec.Amount, symbol)
+		fmt.Printf("👤 来自:  %s\n", rec.From)
+		fmt.Printf("📦 区块:  %d\n", rec.BlockNumber)
+		fmt.Printf("🔗 详情:  https://bscscan.com/tx/%s\n", rec.TxHash)
+		fmt.Println("========================================================")
 	}
 }
 ```

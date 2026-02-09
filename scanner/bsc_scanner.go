@@ -16,16 +16,20 @@ import (
 )
 
 const (
-	// USDT_CONTRACT_ADDR 定义 USDT 合约地址
-	USDT_CONTRACT_ADDR = "0x55d398326f99059fF775485246999027B3197955"
 	// TRANSFER_EVENT_SIG 定义 Transfer 事件的哈希签名
 	TRANSFER_EVENT_SIG = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-	// USDT_DECIMALS 定义 USDT 的精度 (18位)
-	USDT_DECIMALS = 18
+	// TOKEN_DECIMALS 定义代币精度 (USDT/USDC 均为 18位)
+	TOKEN_DECIMALS = 18
 
 	// WORKER_COUNT 并发工兵数量 (5个刚好，太多会被封IP，太少太慢)
 	WORKER_COUNT = 5
 )
+
+// SupportedTokens 支持的代币列表
+var SupportedTokens = map[string]string{
+	"USDT": "0x55d398326f99059fF775485246999027B3197955",
+	"USDC": "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", // Binance-Peg USDC
+}
 
 // DefaultRPCs 默认的 RPC 节点列表
 var DefaultRPCs = []string{
@@ -36,10 +40,18 @@ var DefaultRPCs = []string{
 }
 
 // StartScan 扫描入口封装，自动寻找可用节点并返回结果
-func StartScan(walletAddr string) ([]DepositRecord, error) {
-	fmt.Println("🚀 正在寻找最佳 RPC 节点...")
+// walletAddr: 钱包地址
+// symbol: 代币符号 (如 "USDT", "USDC")
+func StartScan(walletAddr string, symbol string) ([]DepositRecord, error) {
+	// 获取代币合约地址
+	contractAddr, ok := SupportedTokens[strings.ToUpper(symbol)]
+	if !ok {
+		return nil, fmt.Errorf("不支持的代币符号: %s", symbol)
+	}
 
-	var bsc *USDTScanner
+	fmt.Printf("🚀 正在寻找最佳 RPC 节点以扫描 %s (%s)...\n", symbol, contractAddr)
+
+	var bsc *TokenScanner
 	var currentBlock uint64
 	var activeRPC string
 
@@ -48,7 +60,7 @@ func StartScan(walletAddr string) ([]DepositRecord, error) {
 		fmt.Printf("   正在测试: %-35s ... ", rpcUrl)
 
 		// 1. 尝试建立连接
-		tempScanner, err := NewUSDTScanner(rpcUrl, DefaultRPCs)
+		tempScanner, err := NewTokenScanner(rpcUrl, DefaultRPCs, contractAddr)
 		if err != nil {
 			fmt.Printf("❌ 连接失败 (%v)\n", err)
 			continue
@@ -103,8 +115,8 @@ type DepositRecord struct {
 	Time        time.Time  // 交易时间
 }
 
-// USDTScanner 定义扫描器结构体
-type USDTScanner struct {
+// TokenScanner 定义扫描器结构体
+type TokenScanner struct {
 	Client          *ethclient.Client // 以太坊客户端
 	ContractAddress common.Address    // 合约地址对象
 	TransferTopic   common.Hash       // 事件主题哈希
@@ -115,8 +127,8 @@ type USDTScanner struct {
 	mu         sync.RWMutex // 保护 Client 和 currentRPC 的读写
 }
 
-// NewUSDTScanner 创建一个新的扫描器实例
-func NewUSDTScanner(initialRPC string, allRPCs []string) (*USDTScanner, error) {
+// NewTokenScanner 创建一个新的扫描器实例
+func NewTokenScanner(initialRPC string, allRPCs []string, contractAddr string) (*TokenScanner, error) {
 	// 连接到指定的 RPC 节点
 	client, err := ethclient.Dial(initialRPC)
 	if err != nil {
@@ -124,9 +136,9 @@ func NewUSDTScanner(initialRPC string, allRPCs []string) (*USDTScanner, error) {
 		return nil, fmt.Errorf("连接 RPC 失败: %w", err)
 	}
 	// 返回初始化的扫描器对象
-	return &USDTScanner{
+	return &TokenScanner{
 		Client:          client,
-		ContractAddress: common.HexToAddress(USDT_CONTRACT_ADDR),
+		ContractAddress: common.HexToAddress(contractAddr),
 		TransferTopic:   common.HexToHash(TRANSFER_EVENT_SIG),
 		rpcList:         allRPCs,
 		currentRPC:      initialRPC,
@@ -134,7 +146,7 @@ func NewUSDTScanner(initialRPC string, allRPCs []string) (*USDTScanner, error) {
 }
 
 // Close 关闭扫描器连接
-func (s *USDTScanner) Close() {
+func (s *TokenScanner) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Client != nil {
@@ -143,7 +155,7 @@ func (s *USDTScanner) Close() {
 }
 
 // GetCurrentBlock 获取当前最新区块高度
-func (s *USDTScanner) GetCurrentBlock(ctx context.Context) (uint64, error) {
+func (s *TokenScanner) GetCurrentBlock(ctx context.Context) (uint64, error) {
 	s.mu.RLock()
 	client := s.Client
 	s.mu.RUnlock()
@@ -151,7 +163,7 @@ func (s *USDTScanner) GetCurrentBlock(ctx context.Context) (uint64, error) {
 }
 
 // switchNode 切换到下一个可用节点
-func (s *USDTScanner) switchNode(failedRPC string) {
+func (s *TokenScanner) switchNode(failedRPC string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -218,7 +230,7 @@ func (s *USDTScanner) switchNode(failedRPC string) {
 // ScanDeposits 并发扫描入口函数
 // 参数: 上下文, 钱包地址, 开始区块, 结束区块
 // 返回: 入账记录列表, 错误信息
-func (s *USDTScanner) ScanDeposits(ctx context.Context, walletAddr string, startBlock, endBlock uint64) ([]DepositRecord, error) {
+func (s *TokenScanner) ScanDeposits(ctx context.Context, walletAddr string, startBlock, endBlock uint64) ([]DepositRecord, error) {
 	// 将钱包地址转换为哈希格式，用于过滤日志
 	targetAddressHash := common.HexToHash(walletAddr)
 
@@ -297,7 +309,7 @@ func (s *USDTScanner) ScanDeposits(ctx context.Context, walletAddr string, start
 }
 
 // worker 工兵函数：负责具体的区块扫描逻辑，一次只处理一个区块
-func (s *USDTScanner) worker(ctx context.Context, id int, jobs <-chan uint64, results chan<- []DepositRecord, wg *sync.WaitGroup, targetHash common.Hash) {
+func (s *TokenScanner) worker(ctx context.Context, id int, jobs <-chan uint64, results chan<- []DepositRecord, wg *sync.WaitGroup, targetHash common.Hash) {
 	// 函数退出时通知 WaitGroup
 	defer wg.Done()
 
@@ -356,10 +368,10 @@ func (s *USDTScanner) worker(ctx context.Context, id int, jobs <-chan uint64, re
 
 			fmt.Printf("⚠️  节点 %s 遇到错误: %s (Worker %d)\n", currentRPC, displayMsg, id)
 
-			// 检查是否是 429 (请求过多) 或 limit exceeded 错误，或者超时/无响应
+			// 检查是否是 429 (请求过多) 或 limit exceeded 错误，或者超时/无响应/数据修剪(pruned)
 			if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "limit") ||
 				strings.Contains(errMsg, "deadline") || strings.Contains(errMsg, "timeout") ||
-				strings.Contains(errMsg, "no response") {
+				strings.Contains(errMsg, "no response") || strings.Contains(errMsg, "pruned") {
 				// -------------------------------------------------------------
 				// 触发自动切换节点逻辑
 				// -------------------------------------------------------------
@@ -418,7 +430,7 @@ func (s *USDTScanner) worker(ctx context.Context, id int, jobs <-chan uint64, re
 }
 
 // parseLog 解析单个日志为 DepositRecord 结构
-func (s *USDTScanner) parseLog(vLog types.Log) (DepositRecord, bool) {
+func (s *TokenScanner) parseLog(vLog types.Log) (DepositRecord, bool) {
 	// 检查 topics 长度，标准的 Transfer 事件应该有 3 个 topic (签名, from, to)
 	if len(vLog.Topics) < 3 {
 		return DepositRecord{}, false
@@ -432,7 +444,7 @@ func (s *USDTScanner) parseLog(vLog types.Log) (DepositRecord, bool) {
 		BlockNumber: vLog.BlockNumber,                                    // 区块号
 		From:        common.BytesToAddress(vLog.Topics[1].Bytes()).Hex(), // 发送方 (Topic 1)
 		To:          common.BytesToAddress(vLog.Topics[2].Bytes()).Hex(), // 接收方 (Topic 2)
-		Amount:      weiToDecimal(amountInt, USDT_DECIMALS),              // 转换金额精度
+		Amount:      weiToDecimal(amountInt, TOKEN_DECIMALS),             // 转换金额精度
 		LogIndex:    vLog.Index,                                          // 日志索引
 	}, true
 }
